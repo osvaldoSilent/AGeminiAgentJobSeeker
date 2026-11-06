@@ -27,7 +27,7 @@ flowchart LR
     D --> E{"fit_score >= 75%?"}
     E -- "No" --> F["Descarta vacante ([DECISION] DISCARDED)"]
     E -- "Sí (Con Email)" --> G["Redacta Cold Email + Adjunta cv.pdf"]
-    E -- "Sí (Sin Email)" --> H["Redacta LinkedIn DM + Adjunta cv.pdf"]
+    E -- "Sí (Sin Email)" --> H["obtiene Link del post + Adjunta cv.pdf"]
     G --> I["3. Inyección IMAP SSL (Puerto 993)"]
     H --> I
     I --> J["Carpeta [Gmail]/Borradores o [Gmail]/Drafts"]
