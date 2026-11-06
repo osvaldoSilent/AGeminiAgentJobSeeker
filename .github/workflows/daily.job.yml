@@ -2,8 +2,8 @@ name: LinkedIn AI Agent Daily Run
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Ejecuta todos los días a las 8:00 AM UTC
-  workflow_dispatch: # Permite ejecutarlo manualmente con un clic para pruebas
+    - cron: '0 8 * * *' # Runs daily at 08:00 AM UTC
+  workflow_dispatch: # Allows manual one-click execution for testing
 
 jobs:
   run-agent:
