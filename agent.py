@@ -26,8 +26,7 @@ class JobSeekerAgent:
             
         # Nueva inicialización del cliente
         self.client = genai.Client(
-            api_key=self.api_key,
-            http_options={'timeout': 30.0}
+            api_key=self.api_key
         )
         logger.info("AI Agent initialized successfully with google.genai SDK.")
 
