@@ -134,62 +134,47 @@ class JobSeekerAgent:
             logger.error(f"Error fatal de IMAP al guardar el borrador: {e}")
             return False
     def fetch_linkedin_posts(self, keywords="Senior Java Backend", location="Mexico", limit=3) -> list:
-        """Busca publicaciones orgánicas usando OSINT (Google Dorks) y extrae correos con Regex."""
-        from bs4 import BeautifulSoup
-        import requests
+        """Busca publicaciones orgánicas usando OSINT en DuckDuckGo para evadir bloqueos de IP."""
         import re
-        import time
+        from duckduckgo_search import DDGS
         
-        logger.info("Ejecutando Google Dork para buscar publicaciones de reclutadores...")
+        logger.info("Ejecutando Dorking en DuckDuckGo (Evasión Anti-Bot)...")
         
-        # Construimos el Dork: restringe a posts de LinkedIn y busca frases de contratación
-        query = f'site:linkedin.com/posts OR site:linkedin.com/feed/update ("we are hiring" OR "buscamos") "{keywords}" "{location}" OR "mexico remote"'
-        url = f"https://www.google.com/search?q={query}&num=10"
-        
-        # Header crítico para que Google no rechace a GitHub Actions
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        # Ajustamos el Dork a la sintaxis que mejor procesa DuckDuckGo
+        query = f'site:linkedin.com/posts OR site:linkedin.com/feed/update "we are hiring" OR "buscamos" "{keywords}" "{location}"'
         
         posts = []
         try:
-            response = requests.get(url, headers=headers, timeout=15)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Google agrupa los resultados en divs con la clase 'tF2Cxc'
-            for g in soup.find_all('div', class_='tF2Cxc'):
-                if len(posts) >= limit:
-                    break
+            with DDGS() as ddgs:
+                # Retorna un generador con diccionarios de resultados
+                results = ddgs.text(query, max_results=limit)
+                
+                for r in results:
+                    link = r.get("href", "")
+                    snippet = r.get("body", "")
                     
-                link_tag = g.find('a')
-                if not link_tag: continue
-                link = link_tag['href']
-                
-                # Extraemos el fragmento de texto (snippet) que Google renderiza
-                snippet_div = g.find('div', class_='VwiC3b')
-                snippet = snippet_div.text if snippet_div else ""
-                
-                # Buscamos patrones de correo electrónico en el texto
-                email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', snippet)
-                extracted_email = email_match.group(0) if email_match else None
-                
-                logger.info(f"Post encontrado: {link}")
-                if extracted_email:
-                    logger.info(f"¡Correo cazado!: {extracted_email}")
-                
-                posts.append({
-                    "url": link,
-                    "description": snippet,
-                    "extracted_email": extracted_email
-                })
-                
-            time.sleep(2) # Pausa ética
-            
+                    if not link or "linkedin.com" not in link:
+                        continue
+                    
+                    # Buscamos patrones de correo electrónico en el snippet
+                    email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', snippet)
+                    extracted_email = email_match.group(0) if email_match else None
+                    
+                    logger.info(f"Post encontrado: {link}")
+                    if extracted_email:
+                        logger.info(f"¡Correo cazado!: {extracted_email}")
+                    
+                    posts.append({
+                        "url": link,
+                        "description": snippet,
+                        "extracted_email": extracted_email
+                    })
+                    
         except Exception as e:
-            logger.error(f"Error raspando Google Dorks: {e}")
+            logger.error(f"Error raspando con DuckDuckGo: {e}")
             
         return posts
-
+    
 if __name__ == "__main__":
     agent = JobSeekerAgent()
     cv_md = agent.load_cv_markdown("cv.md")
