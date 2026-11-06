@@ -35,9 +35,7 @@ class JobSeekerAgent:
         return path.read_text(encoding="utf-8")
 
     def generate_cold_email(self, job_post_text: str, cv_content: str) -> dict:
-        """Genera el asunto y cuerpo del correo conectándose a la API REST de Gemini."""
-        logger.info("Generando correo persuasivo vía Gemini REST API...")
-        
+        """Genera el correo con un patrón de Cascading Fallback entre modelos Gemini."""
         prompt = f"""
         You are an autonomous AI Agent built by Osvaldo Isaac Garcia Amador.
         
@@ -55,39 +53,48 @@ class JobSeekerAgent:
         Return ONLY a valid JSON: {{"fit_score": int, "subject": str, "body": str}}
         """
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={self.api_key}"
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"}
         }
         
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                # Timeout nativo y estricto de 15 segundos por intento
-                response = requests.post(url, headers=headers, json=payload, timeout=15)
-                response.raise_for_status() 
-                
-                data = response.json()
-                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(raw_text)
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                if attempt < max_retries - 1:
-                    wait_time = 5 * (2 ** attempt)
-                    logger.warning(f"Error de red ({error_msg[:25]}...). Reintentando en {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                logger.error(f"Gemini API colapsó totalmente: {str(e)}. Activando Fallback Estático.")
-                # Graceful Degradation: Plantilla por defecto si falla la IA
-                return {
-                    "fit_score": 85,
-                    "subject": "Senior Java Backend Engineer / Tech Lead - Osvaldo Garcia",
-                    "body": "Hello,\n\nI am writing to express my interest in the backend engineering position. As a Technical Lead based in Mexico with extensive experience architecting distributed microservices using Java, Spring Boot, and GCP, I am confident in my ability to bring immediate value to your team.\n\nPlease find my resume attached for your review. I look forward to the possibility of discussing this role further.\n\nBest regards,\nOsvaldo Garcia (Automated Pipeline Fallback)"
-                }
+        # Arquitectura de Cascading Fallback: De mayor a menor capacidad
+        models_to_try = ["gemini-3.8-flash", "gemini-1.5-flash"]
+        max_retries = 3 # 3 intentos por cada modelo (6 en total antes del fallback estático)
+        
+        for model in models_to_try:
+            logger.info(f"Intentando generar correo usando {model}...")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=15)
+                    response.raise_for_status() 
+                    
+                    data = response.json()
+                    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    return json.loads(raw_text)
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if attempt < max_retries - 1:
+                        wait_time = 3 * (2 ** attempt) # Esperará 3s, 6s...
+                        logger.warning(f"[{model}] Intermitencia ({error_msg[:25]}...). Reintentando en {wait_time}s...")
+                        import time
+                        time.sleep(wait_time)
+                    else:
+                        logger.info("Descartado por bajo Fit Score.\n")
+                        
+                    # Rate Limiter: Pausa de 5 segundos entre vacantes
+                    import time
+                    time.sleep(5)
+        logger.error("Todos los modelos de IA fallaron. Activando Fallback Estático.")
+        return {
+            "fit_score": 85,
+            "subject": "Senior Java Backend Engineer / Tech Lead - Osvaldo Garcia",
+            "body": "Hello,\n\nI am writing to express my interest in the backend engineering position. As a Technical Lead based in Mexico with extensive experience architecting distributed microservices using Java, Spring Boot, and GCP, I am confident in my ability to bring immediate value to your team.\n\nPlease find my resume attached for your review. I look forward to the possibility of discussing this role further.\n\nBest regards,\nOsvaldo Garcia (Automated Pipeline Fallback)"
+        }
 
     def save_as_draft_with_pdf(self, to_email: str, subject: str, body: str, pdf_path: str = "cv.pdf") -> bool:
         """Construye el correo Mime, adjunta el PDF y lo guarda en Borradores usando IMAP."""
