@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("JobSeekerAIAgent")
 
-class AGeminiAgentJobSeeker:
+class JobSeekerAgent:
     def __init__(self):
         """Initializes the AI agent and authenticates with Google Gemini API."""
         self.api_key = os.environ.get("GEMINI_API_KEY")
@@ -57,4 +57,80 @@ class AGeminiAgentJobSeeker:
         Instructions:
         1. Calculate a "fit_score" (integer 1-100) evaluating how well the post matches Osvaldo's profile.
         2. Write an engaging, concise email "subject" (in English if the post is in English, or Spanish if the post is in Spanish, highlighting Senior Java / Tech Lead skills).
-        3. Write the email "body" (maximum 3 short paragraphs). Openly state that you are Osvaldo'
+        3. Write the email "body" (maximum 3 short paragraphs). Openly state that you are Osvaldo's Autonomous AI Agent running on a daily automated pipeline, reaching out on his behalf with his PDF resume attached. Connect his specific strengths from the CV to what they are looking for.
+        
+        Output Requirements:
+        Return ONLY a valid JSON object with keys: "fit_score" (int), "subject" (str), and "body" (str).
+        """
+        
+        try:
+            response = self.model.generate_content(prompt)
+            return json.loads(response.text)
+        except Exception as e:
+            logger.error(f"Gemini generation failed: {e}")
+            return {"fit_score": 0, "subject": "", "body": ""}
+
+    def send_email_with_pdf(self, to_email: str, subject: str, body: str, pdf_path: str = "cv.pdf") -> bool:
+        """Sends an email with the PDF resume attached via Gmail SMTP."""
+        if not self.smtp_user or not self.smtp_pass:
+            logger.error("SMTP credentials (SMTP_USER / SMTP_APP_PASSWORD) are missing.")
+            return False
+
+        pdf_file = Path(pdf_path)
+        if not pdf_file.exists():
+            logger.error(f"Attachment file '{pdf_path}' not found in the repository.")
+            return False
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = f"Osvaldo Garcia (AI Agent) <{self.smtp_user}>"
+        msg["To"] = to_email
+        msg.set_content(body)
+
+        # Read and attach the PDF binary payload
+        with open(pdf_file, "rb") as f:
+            pdf_data = f.read()
+            msg.add_attachment(
+                pdf_data,
+                maintype="application",
+                subtype="pdf",
+                filename="Osvaldo_Garcia_Senior_Software_Engineer_CV.pdf"
+            )
+
+        try:
+            logger.info(f"Connecting to Gmail SMTP to dispatch email to {to_email}...")
+            # Port 465 uses implicit SSL/TLS (cleaner and faster than port 587 STARTTLS)
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(self.smtp_user, self.smtp_pass)
+                server.send_message(msg)
+            logger.info("Email dispatched successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"SMTP error while sending email: {e}")
+            return False
+
+if __name__ == "__main__":
+    agent = JobSeekerAgent()
+    cv_md = agent.load_cv_markdown("cv.md")
+    
+    # Simulated LinkedIn post for end-to-end testing
+    dummy_post = """
+    Hiring! Looking for a Senior Java Backend Developer / Tech Lead based in Mexico (100% Remote) 
+    with strong English skills, Spring Boot, microservices, and GCP experience. 
+    Send your resume to hiring@example.com
+    """
+    
+    # Send the first test to your own email address to inspect how it lands in the inbox
+    test_recipient = os.environ.get("SMTP_USER")
+    
+    result = agent.generate_cold_email(dummy_post, cv_md)
+    fit_score = result.get("fit_score", 0)
+    logger.info(f"Calculated Fit Score: {fit_score}%")
+    
+    if fit_score >= 75 and test_recipient:
+        agent.send_email_with_pdf(
+            to_email=test_recipient,
+            subject=result["subject"],
+            body=result["body"],
+            pdf_path="cv.pdf"
+        )
