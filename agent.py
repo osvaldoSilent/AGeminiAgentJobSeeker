@@ -25,7 +25,10 @@ class JobSeekerAgent:
             raise ValueError("GEMINI_API_KEY environment variable is missing.")
             
         # Nueva inicialización del cliente
-        self.client = genai.Client(api_key=self.api_key)
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options={'timeout': 30.0}
+        )
         logger.info("AI Agent initialized successfully with google.genai SDK.")
 
     def load_cv_markdown(self, md_path: str = "cv.md") -> str:
