@@ -134,30 +134,110 @@ class JobSeekerAgent:
         except Exception as e:
             logger.error(f"Error fatal de IMAP al guardar el borrador: {e}")
             return False
+    def fetch_linkedin_jobs(self, keywords="Senior Java Backend", location="Mexico", limit=3) -> list:
+        """Extrae vacantes reales recientes usando los endpoints públicos de LinkedIn."""
+        from bs4 import BeautifulSoup
+        import requests
+        import time
+        
+        logger.info(f"Buscando vacantes de '{keywords}' en {location}...")
+        
+        # Endpoint público que devuelve HTML puro sin requerir login
+        search_url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&start=0"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        jobs = []
+        try:
+            response = requests.get(search_url, headers=headers, timeout=15)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Cada tarjeta de trabajo está en un <li>
+            job_cards = soup.find_all('li')
+            
+            for card in job_cards:
+                if len(jobs) >= limit:
+                    break
+                    
+                try:
+                    base_card = card.find('div', class_='base-card')
+                    if not base_card: 
+                        continue
+                        
+                    # Extraer metadata básica
+                    job_id = base_card.get('data-entity-urn').split(':')[-1]
+                    title = card.find('h3', class_='base-search-card__title').text.strip()
+                    company = card.find('h4', class_='base-search-card__subtitle').text.strip()
+                    
+                    logger.info(f"Procesando vacante: {title} en {company}...")
+                    
+                    # Llamada secundaria para obtener la descripción completa
+                    desc_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+                    desc_resp = requests.get(desc_url, headers=headers, timeout=10)
+                    desc_soup = BeautifulSoup(desc_resp.text, 'html.parser')
+                    
+                    desc_div = desc_soup.find('div', class_='show-more-less-html__markup')
+                    description = desc_div.text.strip() if desc_div else "Sin descripción detallada."
+                    
+                    jobs.append({
+                        "title": title,
+                        "company": company,
+                        "description": description,
+                        "url": f"https://www.linkedin.com/jobs/view/{job_id}"
+                    })
+                    
+                    # Pausa ética para evitar que LinkedIn nos bloquee la IP
+                    time.sleep(2)
+                    
+                except Exception as e:
+                    logger.warning(f"Error procesando una vacante individual: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error general conectando al buscador de LinkedIn: {e}")
+            
+        return jobs
 
 if __name__ == "__main__":
     agent = JobSeekerAgent()
     cv_md = agent.load_cv_markdown("cv.md")
-    
-    # Vacante simulada para probar el pipeline
-    dummy_post = """
-    Hiring! Looking for a Senior Java Backend Developer / Tech Lead based in Mexico (100% Remote) 
-    with strong English skills, Spring Boot, microservices, and GCP experience. 
-    Send your resume to hiring@example.com
-    """
-    
     test_recipient = os.environ.get("SMTP_USER")
     
-    # 1. Analizar post y redactar
-    result = agent.generate_cold_email(dummy_post, cv_md)
-    fit_score = result.get("fit_score", 0)
-    logger.info(f"Fit Score Calculado: {fit_score}%")
+    # 1. Scrapear las 3 vacantes más relevantes del día
+    # Puedes ajustar los keywords (ej. "Spring Boot", "Tech Lead")
+    real_jobs = agent.fetch_linkedin_jobs(
+        keywords="Senior Java Backend", 
+        location="Mexico", 
+        limit=3
+    )
     
-    # 2. Guardar en borradores si es un buen match
-    if fit_score >= 75 and test_recipient:
-        agent.save_as_draft_with_pdf(
-            to_email=test_recipient,
-            subject=result["subject"],
-            body=result["body"],
-            pdf_path="cv.pdf"
-        )
+    if not real_jobs:
+        logger.warning("No se encontraron vacantes hoy o LinkedIn bloqueó la petición.")
+    
+    # 2. Iterar sobre cada vacante, evaluarla y crear el borrador
+    for job in real_jobs:
+        logger.info(f"--- Evaluando: {job['title']} en {job['company']} ---")
+        
+        # Preparamos el texto para el LLM
+        full_job_text = f"Title: {job['title']}\nCompany: {job['company']}\nURL: {job['url']}\nDescription: {job['description']}"
+        
+        # La IA analiza y redacta
+        result = agent.generate_cold_email(full_job_text, cv_md)
+        fit_score = result.get("fit_score", 0)
+        
+        logger.info(f"Fit Score Calculado para {job['company']}: {fit_score}%")
+        
+        # Filtro de calidad: Solo guarda borrador si pasas del 75%
+        if fit_score >= 75 and test_recipient:
+            # Agregamos la URL de la vacante al cuerpo del correo para tu propia referencia
+            body_with_context = f"{result['body']}\n\n---\nNota interna: Vacante encontrada en {job['url']}"
+            
+            agent.save_as_draft_with_pdf(
+                to_email=test_recipient,
+                subject=result["subject"],
+                body=body_with_context,
+                pdf_path="cv.pdf"
+            )
+            logger.info("Borrador listo en Gmail.\n")
+        else:
+            logger.info("Descartada por bajo Fit Score.\n")
