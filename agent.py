@@ -134,20 +134,18 @@ class JobSeekerAgent:
             logger.error(f"Error fatal de IMAP al guardar el borrador: {e}")
             return False
     def fetch_linkedin_posts(self, keywords="Senior Java Backend", location="Mexico", limit=3) -> list:
-        """Busca publicaciones orgánicas usando OSINT en DuckDuckGo para evadir bloqueos de IP."""
+        """Busca publicaciones orgánicas usando OSINT en DuckDuckGo/Bing (Evasión Anti-Bot)."""
         import re
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS  # <-- Importación corregida aquí
         
-        logger.info("Ejecutando Dorking en DuckDuckGo (Evasión Anti-Bot)...")
+        logger.info("Ejecutando Dorking con librería ddgs (Evasión Anti-Bot)...")
         
-        # Ajustamos el Dork a la sintaxis que mejor procesa DuckDuckGo
-        query = f'site:linkedin.com/posts OR site:linkedin.com/feed/update "we are hiring" OR "buscamos" "{keywords}" "{location}"'
+        query = f'site:linkedin.com/posts "we are hiring" {keywords} {location}'
         
         posts = []
         try:
-            with DDGS() as ddgs:
-                # Retorna un generador con diccionarios de resultados
-                results = ddgs.text(query, max_results=limit)
+            with DDGS() as ddgs_client:
+                results = ddgs_client.text(query, max_results=limit)
                 
                 for r in results:
                     link = r.get("href", "")
@@ -156,7 +154,6 @@ class JobSeekerAgent:
                     if not link or "linkedin.com" not in link:
                         continue
                     
-                    # Buscamos patrones de correo electrónico en el snippet
                     email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', snippet)
                     extracted_email = email_match.group(0) if email_match else None
                     
@@ -171,50 +168,50 @@ class JobSeekerAgent:
                     })
                     
         except Exception as e:
-            logger.error(f"Error raspando con DuckDuckGo: {e}")
+            logger.error(f"Error raspando con ddgs: {e}")
             
         return posts
-    
+ 
 if __name__ == "__main__":
     agent = JobSeekerAgent()
     cv_md = agent.load_cv_markdown("cv.md")
-    test_recipient = os.environ.get("SMTP_USER")
+    my_email = os.environ.get("SMTP_USER")
     
-    # 1. Scrapear las 3 vacantes más relevantes del día
-    # Puedes ajustar los keywords (ej. "Spring Boot", "Tech Lead")
-    real_jobs = agent.fetch_linkedin_posts(
-        keywords="Senior Java Backend", 
+    # Busca posts orgánicos
+    posts = agent.fetch_linkedin_posts(
+        keywords="Java Spring Boot", 
         location="Mexico", 
         limit=3
     )
     
-    if not real_jobs:
-        logger.warning("No se encontraron vacantes hoy o LinkedIn bloqueó la petición.")
+    if not posts:
+        logger.warning("No se encontraron publicaciones relevantes hoy.")
     
-    # 2. Iterar sobre cada vacante, evaluarla y crear el borrador
-    for job in real_jobs:
-        logger.info(f"--- Evaluando: {job['title']} en {job['company']} ---")
+    for post in posts:
+        logger.info(f"--- Evaluando post: {post['url']} ---")
         
-        # Preparamos el texto para el LLM
-        full_job_text = f"Title: {job['title']}\nCompany: {job['company']}\nURL: {job['url']}\nDescription: {job['description']}"
+        # Inyectamos el contexto correcto para la IA usando las llaves del nuevo scraper
+        context_text = f"URL: {post['url']}\nSnippet: {post['description']}\nExtracted Email: {post['extracted_email'] or 'NONE'}"
         
-        # La IA analiza y redacta
-        result = agent.generate_cold_email(full_job_text, cv_md)
+        result = agent.generate_cold_email(context_text, cv_md)
         fit_score = result.get("fit_score", 0)
+        logger.info(f"Fit Score Calculado: {fit_score}%")
         
-        logger.info(f"Fit Score Calculado para {job['company']}: {fit_score}%")
-        
-        # Filtro de calidad: Solo guarda borrador si pasas del 75%
-        if fit_score >= 75 and test_recipient:
-            # Agregamos la URL de la vacante al cuerpo del correo para tu propia referencia
-            body_with_context = f"{result['body']}\n\n---\nNota interna: Vacante encontrada en {job['url']}"
+        if fit_score >= 75:
+            # Si cazó un correo del reclutador, lo usa. Si no, lo guarda en tus borradores para ti.
+            target_email = post['extracted_email'] if post['extracted_email'] else my_email
+            
+            if not post['extracted_email']:
+                result["subject"] = f"[LINKEDIN DM] Responder a: {post['url']}"
+                
+            body_with_link = f"{result['body']}\n\n---\nPost original: {post['url']}"
             
             agent.save_as_draft_with_pdf(
-                to_email=test_recipient,
+                to_email=target_email,
                 subject=result["subject"],
-                body=body_with_context,
+                body=body_with_link,
                 pdf_path="cv.pdf"
             )
-            logger.info("Borrador listo en Gmail.\n")
+            logger.info(f"Borrador guardado para {target_email}.\n")
         else:
-            logger.info("Descartada por bajo Fit Score.\n")
+            logger.info("Descartado por bajo Fit Score.\n")
