@@ -74,17 +74,16 @@ class JobSeekerAgent:
                 return json.loads(response.text)
             
             except Exception as e:
-                error_msg = str(e)
-                # Si es un error 503 (Servicio no disponible) o 429 (Límite de peticiones)
-                if "503" in error_msg or "429" in error_msg:
+                error_msg = str(e).lower()
+                if "503" in error_msg or "429" in error_msg or "timed out" in error_msg:
                     if attempt < max_retries - 1:
                         wait_time = 2 ** attempt  # Espera 1s, luego 2s...
-                        logger.warning(f"API saturada ({error_msg[:10]}...). Reintentando en {wait_time} segundos (Intento {attempt + 2}/{max_retries}).")
+                        logger.warning(f"Intermitencia detectada ({error_msg[:20]}...). Reintentando en {wait_time} segundos (Intento {attempt + 2}/{max_retries}).")
                         import time
                         time.sleep(wait_time)
-                        continue # Vuelve a intentar el loop
+                        continue
                 
-                logger.error(f"Gemini generation failed: {error_msg}")
+                logger.error(f"Gemini generation failed: {str(e)}")
                 return {"fit_score": 0, "subject": "", "body": ""}
 
     def send_email_with_pdf(self, to_email: str, subject: str, body: str, pdf_path: str = "cv.pdf") -> bool:
