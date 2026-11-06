@@ -40,7 +40,7 @@ class JobSeekerAgent:
 
     def generate_cold_email(self, job_post_text: str, cv_content: str) -> dict:
         """Evaluates the post against the CV and generates a custom subject and body."""
-        logger.info("Generating customized cold email with Gemini 3.8 Flash...")
+        logger.info("Generating customized cold email via Gemini REST API...")
         
         prompt = f"""
         You are an autonomous AI Agent built and deployed by Osvaldo Isaac Garcia Amador.
@@ -60,29 +60,37 @@ class JobSeekerAgent:
         Return ONLY a valid JSON object with keys: "fit_score" (int), "subject" (str), and "body" (str).
         """
         
+        # Consumo directo de la API REST de Google
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={self.api_key}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseMimeType": "application/json"}
+        }
+        
+        import requests
+        import time
+        
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = self.client.models.generate_content(
-                    model='gemini-3.8-flash',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                    )
-                )
-                return json.loads(response.text)
-            
+                # Timeout estricto y nativo de 15 segundos
+                response = requests.post(url, headers=headers, json=payload, timeout=15)
+                response.raise_for_status() # Lanza error si el status no es 200
+                
+                data = response.json()
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(raw_text)
+                
             except Exception as e:
                 error_msg = str(e).lower()
-                if "503" in error_msg or "429" in error_msg or "timed out" in error_msg:
-                    if attempt < max_retries - 1:
-                        wait_time = 2 ** attempt  # Espera 1s, luego 2s...
-                        logger.warning(f"Intermitencia detectada ({error_msg[:20]}...). Reintentando en {wait_time} segundos (Intento {attempt + 2}/{max_retries}).")
-                        import time
-                        time.sleep(wait_time)
-                        continue
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Error de red ({error_msg[:20]}...). Reintentando en {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
                 
-                logger.error(f"Gemini generation failed: {str(e)}")
+                logger.error(f"Gemini REST API failed: {str(e)}")
                 return {"fit_score": 0, "subject": "", "body": ""}
 
     def send_email_with_pdf(self, to_email: str, subject: str, body: str, pdf_path: str = "cv.pdf") -> bool:
