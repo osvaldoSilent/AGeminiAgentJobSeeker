@@ -121,11 +121,13 @@ class JobSeekerAgent:
                 internal_date = imaplib.Time2Internaldate(time.time())
                 
                 try:
-                    # Intento 1: Servidor en Inglés
-                    imap.append('[Gmail]/Drafts', r'(\Draft)', internal_date, msg.as_bytes())
+                    # Intento 1: Servidor en Español
+                    status, _ = imap.append('"[Gmail]/Borradores"', r'(\Draft)', internal_date, msg.as_bytes())
+                    if status != 'OK':
+                        raise imaplib.IMAP4.error("Fallo al guardar en Borradores")
                 except imaplib.IMAP4.error:
-                    # Intento 2: Servidor en Español
-                    imap.append('[Gmail]/Borradores', r'(\Draft)', internal_date, msg.as_bytes())
+                    # Intento 2: Servidor en Inglés
+                    imap.append('"[Gmail]/Drafts"', r'(\Draft)', internal_date, msg.as_bytes())
                     
             logger.info("¡Éxito! El correo con el PDF está en tu carpeta de Borradores.")
             return True
