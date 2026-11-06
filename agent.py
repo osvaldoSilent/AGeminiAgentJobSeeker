@@ -58,19 +58,31 @@ class JobSeekerAgent:
         Return ONLY a valid JSON object with keys: "fit_score" (int), "subject" (str), and "body" (str).
         """
         
-        try:
-            # Nueva estructura de llamada a la API
-            response = self.client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model='gemini-3.8-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                    )
                 )
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
-            return {"fit_score": 0, "subject": "", "body": ""}
+                return json.loads(response.text)
+            
+            except Exception as e:
+                error_msg = str(e)
+                # Si es un error 503 (Servicio no disponible) o 429 (Límite de peticiones)
+                if "503" in error_msg or "429" in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Espera 1s, luego 2s...
+                        logger.warning(f"API saturada ({error_msg[:10]}...). Reintentando en {wait_time} segundos (Intento {attempt + 2}/{max_retries}).")
+                        import time
+                        time.sleep(wait_time)
+                        continue # Vuelve a intentar el loop
+                
+                logger.error(f"Gemini generation failed: {error_msg}")
+                return {"fit_score": 0, "subject": "", "body": ""}
 
     def send_email_with_pdf(self, to_email: str, subject: str, body: str, pdf_path: str = "cv.pdf") -> bool:
         """Sends an email with the PDF resume attached via Gmail SMTP."""
