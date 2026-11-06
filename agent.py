@@ -39,21 +39,20 @@ class JobSeekerAgent:
         logger.info("Generando correo persuasivo vía Gemini REST API...")
         
         prompt = f"""
-        You are an autonomous AI Agent built and deployed by Osvaldo Isaac Garcia Amador.
+        You are an autonomous AI Agent built by Osvaldo Isaac Garcia Amador.
         
         Candidate CV (Markdown):
         {cv_content}
         
-        Target Job Post:
+        Target LinkedIn Post Snippet:
         {job_post_text}
         
         Instructions:
-        1. Calculate a "fit_score" (integer 1-100) evaluating how well the post matches Osvaldo's profile.
-        2. Write an engaging, concise email "subject".
-        3. Write the email "body" (maximum 3 short paragraphs). Openly state that you are Osvaldo's Autonomous AI Agent running on a daily automated pipeline, reaching out on his behalf with his PDF resume attached.
+        1. Calculate a "fit_score" (integer 1-100) based on this snippet.
+        2. If this looks like a job opportunity, write an engaging "subject".
+        3. Write the "body". If the snippet contains an email, write a Cold Email. If it DOES NOT contain an email, write a short, punchy Direct Message (DM) meant for LinkedIn. State you are Osvaldo's AI Agent.
         
-        Output Requirements:
-        Return ONLY a valid JSON object with keys: "fit_score" (int), "subject" (str), and "body" (str).
+        Return ONLY a valid JSON: {{"fit_score": int, "subject": str, "body": str}}
         """
         
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={self.api_key}"
@@ -134,69 +133,62 @@ class JobSeekerAgent:
         except Exception as e:
             logger.error(f"Error fatal de IMAP al guardar el borrador: {e}")
             return False
-    def fetch_linkedin_jobs(self, keywords="Senior Java Backend", location="Mexico", limit=3) -> list:
-        """Extrae vacantes reales recientes usando los endpoints públicos de LinkedIn."""
+    def fetch_linkedin_posts(self, keywords="Senior Java Backend", location="Mexico", limit=3) -> list:
+        """Busca publicaciones orgánicas usando OSINT (Google Dorks) y extrae correos con Regex."""
         from bs4 import BeautifulSoup
         import requests
+        import re
         import time
         
-        logger.info(f"Buscando vacantes de '{keywords}' en {location}...")
+        logger.info("Ejecutando Google Dork para buscar publicaciones de reclutadores...")
         
-        # Endpoint público que devuelve HTML puro sin requerir login
-        search_url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&start=0"
+        # Construimos el Dork: restringe a posts de LinkedIn y busca frases de contratación
+        query = f'site:linkedin.com/posts OR site:linkedin.com/feed/update ("we are hiring" OR "buscamos") "{keywords}" "{location}" OR "mexico remote"'
+        url = f"https://www.google.com/search?q={query}&num=10"
+        
+        # Header crítico para que Google no rechace a GitHub Actions
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         
-        jobs = []
+        posts = []
         try:
-            response = requests.get(search_url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Cada tarjeta de trabajo está en un <li>
-            job_cards = soup.find_all('li')
-            
-            for card in job_cards:
-                if len(jobs) >= limit:
+            # Google agrupa los resultados en divs con la clase 'tF2Cxc'
+            for g in soup.find_all('div', class_='tF2Cxc'):
+                if len(posts) >= limit:
                     break
                     
-                try:
-                    base_card = card.find('div', class_='base-card')
-                    if not base_card: 
-                        continue
-                        
-                    # Extraer metadata básica
-                    job_id = base_card.get('data-entity-urn').split(':')[-1]
-                    title = card.find('h3', class_='base-search-card__title').text.strip()
-                    company = card.find('h4', class_='base-search-card__subtitle').text.strip()
-                    
-                    logger.info(f"Procesando vacante: {title} en {company}...")
-                    
-                    # Llamada secundaria para obtener la descripción completa
-                    desc_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-                    desc_resp = requests.get(desc_url, headers=headers, timeout=10)
-                    desc_soup = BeautifulSoup(desc_resp.text, 'html.parser')
-                    
-                    desc_div = desc_soup.find('div', class_='show-more-less-html__markup')
-                    description = desc_div.text.strip() if desc_div else "Sin descripción detallada."
-                    
-                    jobs.append({
-                        "title": title,
-                        "company": company,
-                        "description": description,
-                        "url": f"https://www.linkedin.com/jobs/view/{job_id}"
-                    })
-                    
-                    # Pausa ética para evitar que LinkedIn nos bloquee la IP
-                    time.sleep(2)
-                    
-                except Exception as e:
-                    logger.warning(f"Error procesando una vacante individual: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Error general conectando al buscador de LinkedIn: {e}")
+                link_tag = g.find('a')
+                if not link_tag: continue
+                link = link_tag['href']
+                
+                # Extraemos el fragmento de texto (snippet) que Google renderiza
+                snippet_div = g.find('div', class_='VwiC3b')
+                snippet = snippet_div.text if snippet_div else ""
+                
+                # Buscamos patrones de correo electrónico en el texto
+                email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', snippet)
+                extracted_email = email_match.group(0) if email_match else None
+                
+                logger.info(f"Post encontrado: {link}")
+                if extracted_email:
+                    logger.info(f"¡Correo cazado!: {extracted_email}")
+                
+                posts.append({
+                    "url": link,
+                    "description": snippet,
+                    "extracted_email": extracted_email
+                })
+                
+            time.sleep(2) # Pausa ética
             
-        return jobs
+        except Exception as e:
+            logger.error(f"Error raspando Google Dorks: {e}")
+            
+        return posts
 
 if __name__ == "__main__":
     agent = JobSeekerAgent()
