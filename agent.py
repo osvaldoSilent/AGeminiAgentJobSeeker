@@ -197,7 +197,7 @@ if __name__ == "__main__":
     
     # 1. Scrapear las 3 vacantes más relevantes del día
     # Puedes ajustar los keywords (ej. "Spring Boot", "Tech Lead")
-    real_jobs = agent.fetch_linkedin_jobs(
+    real_jobs = agent.fetch_linkedin_posts(
         keywords="Senior Java Backend", 
         location="Mexico", 
         limit=3
